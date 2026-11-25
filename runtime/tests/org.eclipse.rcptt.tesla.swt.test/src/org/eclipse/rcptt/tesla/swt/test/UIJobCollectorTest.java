@@ -232,7 +232,7 @@ public class UIJobCollectorTest {
 		UIJobCollector subject = new UIJobCollector(parameters, MANAGER);
 		prepare(subject);
 		Job job = busyLoop;
-		long stop = currentTimeMillis() + 10000;
+		long stop = currentTimeMillis() + 300000;
 		assertEmpty("No jobs on start", subject);
 		for (long i = 0; currentTimeMillis() < stop; i++) {
 			Assert.assertTrue(shutdown(job, 10000));
@@ -243,7 +243,13 @@ public class UIJobCollectorTest {
 			job.schedule();
 			job.cancel();
 			job.schedule();
-			assertNever(schedulingTolerance, "Should not step immediately. Iteration " + i, () -> isEmpty(subject));
+			long stopCheck = currentTimeMillis() + schedulingTolerance;
+			while (currentTimeMillis() < stopCheck) {
+				Thread.yield();
+				if (isEmpty(subject)) {
+					Assert.fail("Should not step immediately. Iteration " + i + ", job state: " + job.getState());
+				}
+			}
 			debug("End of attempt " + i);
 		}
 	}
