@@ -293,7 +293,14 @@ public class UIJobCollector implements Closeable {
 							} catch (OperationCanceledException | InterruptedException e) {
 								return Status.OK_STATUS;
 							}
-							jobs.remove(job, info);
+							// schedule() changes the state under the job manager lock, so a job
+							// scheduled again after the checks above is not removed
+							synchronized (jobManagerLock) {
+								if (job.getState() != Job.NONE) {
+									continue;
+								}
+								jobs.remove(job, info);
+							}
 							event("gone", info);
 							found = true;
 						}
