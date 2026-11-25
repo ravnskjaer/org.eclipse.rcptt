@@ -15,6 +15,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
@@ -232,7 +233,7 @@ public class UIJobCollectorTest {
 		UIJobCollector subject = new UIJobCollector(parameters, MANAGER);
 		prepare(subject);
 		Job job = busyLoop;
-		long stop = currentTimeMillis() + 10000;
+		long stop = currentTimeMillis() + 300000;
 		assertEmpty("No jobs on start", subject);
 		for (long i = 0; currentTimeMillis() < stop; i++) {
 			Assert.assertTrue(shutdown(job, 10000));
@@ -243,7 +244,24 @@ public class UIJobCollectorTest {
 			job.schedule();
 			job.cancel();
 			job.schedule();
-			assertNever(schedulingTolerance, "Should not step immediately. Iteration " + i, () -> isEmpty(subject));
+			long checkStart = currentTimeMillis();
+			long stopCheck = checkStart + schedulingTolerance;
+			while (currentTimeMillis() < stopCheck) {
+				Thread.yield();
+				if (isEmpty(subject)) { // unchanged
+					long failedAfter = currentTimeMillis() - checkStart;
+					int jobState = job.getState();
+					int tracked = subject.getCount();
+					List<Job> active = subject.getJobs();
+					Thread.sleep(100);
+					Assert.fail("Should not step immediately. Iteration " + i
+							+ ", after " + failedAfter + " ms"
+							+ ", job state: " + jobState
+							+ ", tracked jobs: " + tracked
+							+ ", active jobs: " + active
+							+ ", tracked 100 ms later: " + subject.getCount());
+				}
+			}
 			debug("End of attempt " + i);
 		}
 	}
