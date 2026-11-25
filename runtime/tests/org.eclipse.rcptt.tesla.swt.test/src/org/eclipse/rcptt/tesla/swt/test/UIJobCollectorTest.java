@@ -15,6 +15,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
@@ -247,12 +248,18 @@ public class UIJobCollectorTest {
 			long stopCheck = checkStart + schedulingTolerance;
 			while (currentTimeMillis() < stopCheck) {
 				Thread.yield();
-				if (isEmpty(subject)) {
+				if (isEmpty(subject)) { // unchanged
+					long failedAfter = currentTimeMillis() - checkStart;
+					int jobState = job.getState();
+					int tracked = subject.getCount();
+					List<Job> active = subject.getJobs();
+					Thread.sleep(100);
 					Assert.fail("Should not step immediately. Iteration " + i
-							+ ", after " + (currentTimeMillis() - checkStart) + " ms"
-							+ ", job state: " + job.getState()
-							+ ", tracked jobs: " + subject.getCount()
-							+ ", active jobs: " + subject.getJobs());
+							+ ", after " + failedAfter + " ms"
+							+ ", job state: " + jobState
+							+ ", tracked jobs: " + tracked
+							+ ", active jobs: " + active
+							+ ", tracked 100 ms later: " + subject.getCount());
 				}
 			}
 			debug("End of attempt " + i);
