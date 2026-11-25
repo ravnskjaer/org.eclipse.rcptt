@@ -243,11 +243,16 @@ public class UIJobCollectorTest {
 			job.schedule();
 			job.cancel();
 			job.schedule();
-			long stopCheck = currentTimeMillis() + schedulingTolerance;
+			long checkStart = currentTimeMillis();
+			long stopCheck = checkStart + schedulingTolerance;
 			while (currentTimeMillis() < stopCheck) {
 				Thread.yield();
 				if (isEmpty(subject)) {
-					Assert.fail("Should not step immediately. Iteration " + i + ", job state: " + job.getState());
+					Assert.fail("Should not step immediately. Iteration " + i
+							+ ", after " + (currentTimeMillis() - checkStart) + " ms"
+							+ ", job state: " + job.getState()
+							+ ", tracked jobs: " + subject.getCount()
+							+ ", active jobs: " + subject.getJobs());
 				}
 			}
 			debug("End of attempt " + i);
