@@ -257,7 +257,7 @@ public class UIJobCollectorTest {
 			job.cancel();
 			job.schedule();
 			long checkStart = currentTimeMillis();
-			long stopCheck = checkStart + schedulingTolerance;
+			long stopCheck = checkStart + 20;
 			while (currentTimeMillis() < stopCheck) {
 				Thread.yield();
 				if (isEmpty(subject)) { // unchanged
@@ -282,6 +282,28 @@ public class UIJobCollectorTest {
 			}
 			debug("End of attempt " + i);
 		}
+	}
+
+	@Test
+	public void cancelRescheduleLeavesJobRunning() throws InterruptedException {
+		Job job = busyLoop;
+		int iterations = 20000;
+		int ended = 0;
+		for (int i = 0; i < iterations; i++) {
+			Assert.assertTrue(shutdown(job, 10));
+			int cancelledBefore = busyLoopCancelledOnStart.get();
+			job.schedule();
+			job.cancel();
+			job.schedule();
+			Thread.sleep(5);
+			// join(1) confirms NONE under the job manager lock, ruling out a transient read
+			if (job.getState() == Job.NONE && job.join(1, null)) {
+				ended++;
+				System.out.println("Iteration " + i + ": job ended, cancelled on start: "
+						+ (busyLoopCancelledOnStart.get() - cancelledBefore) + ", result: " + job.getResult());
+			}
+		}
+		Assert.assertEquals("Job ended after cancel+reschedule in " + ended + " of " + iterations, 0, ended);
 	}
 
 	@Test
