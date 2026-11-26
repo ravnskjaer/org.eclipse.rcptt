@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import org.eclipse.core.resources.IWorkspace;
@@ -52,6 +53,9 @@ import org.junit.rules.TestRule;
 import com.google.common.io.Closer;
 
 public class UIJobCollectorTest {
+	private final AtomicInteger busyLoopRuns = new AtomicInteger();
+	private final AtomicInteger busyLoopCancelledOnStart = new AtomicInteger();
+
 	private static final int schedulingTolerance = 500;
 	private static final IJobManager MANAGER = Job.getJobManager();
 	private final Closer closer = Closer.create();
@@ -81,6 +85,12 @@ public class UIJobCollectorTest {
 	});
 	
 	private final Job busyLoop = Job.create("busyloop", (ICoreRunnable)monitor -> {
+		busyLoopRuns.incrementAndGet();
+		if (monitor.isCanceled()) {
+			busyLoopCancelledOnStart.incrementAndGet();
+			debug("Busyloop - cancelled upon start");
+			return;
+		}
 		if (monitor.isCanceled()) {
 			debug("Busyloop - cancelled upon start");	
 			return;
@@ -241,6 +251,8 @@ public class UIJobCollectorTest {
 			job.join();
 			job.join();
 			debug("Attempt " + i);
+			int runsBefore = busyLoopRuns.get();
+			int cancelledBefore = busyLoopCancelledOnStart.get();
 			job.schedule();
 			job.cancel();
 			job.schedule();
@@ -253,13 +265,19 @@ public class UIJobCollectorTest {
 					int jobState = job.getState();
 					int tracked = subject.getCount();
 					List<Job> active = subject.getJobs();
+					int runs = busyLoopRuns.get() - runsBefore;
+					int cancelledOnStart = busyLoopCancelledOnStart.get() - cancelledBefore;
+					IStatus result = job.getResult();
 					Thread.sleep(100);
 					Assert.fail("Should not step immediately. Iteration " + i
 							+ ", after " + failedAfter + " ms"
 							+ ", job state: " + jobState
 							+ ", tracked jobs: " + tracked
 							+ ", active jobs: " + active
-							+ ", tracked 100 ms later: " + subject.getCount());
+							+ ", runs this iteration: " + runs
+							+ ", cancelled on start: " + cancelledOnStart
+							+ ", result: " + result
+							+ ", busyloop tracked 100 ms later: " + subject.getJobs().contains(job));
 				}
 			}
 			debug("End of attempt " + i);
