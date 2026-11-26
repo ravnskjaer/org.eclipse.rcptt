@@ -15,8 +15,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import org.eclipse.core.resources.IWorkspace;
@@ -51,6 +53,9 @@ import org.junit.rules.TestRule;
 import com.google.common.io.Closer;
 
 public class UIJobCollectorTest {
+	private final AtomicInteger busyLoopRuns = new AtomicInteger();
+	private final AtomicInteger busyLoopCancelledOnStart = new AtomicInteger();
+
 	private static final int schedulingTolerance = 500;
 	private static final IJobManager MANAGER = Job.getJobManager();
 	private final Closer closer = Closer.create();
@@ -80,6 +85,12 @@ public class UIJobCollectorTest {
 	});
 	
 	private final Job busyLoop = Job.create("busyloop", (ICoreRunnable)monitor -> {
+		busyLoopRuns.incrementAndGet();
+		if (monitor.isCanceled()) {
+			busyLoopCancelledOnStart.incrementAndGet();
+			debug("Busyloop - cancelled upon start");
+			return;
+		}
 		if (monitor.isCanceled()) {
 			debug("Busyloop - cancelled upon start");	
 			return;
@@ -232,7 +243,7 @@ public class UIJobCollectorTest {
 		UIJobCollector subject = new UIJobCollector(parameters, MANAGER);
 		prepare(subject);
 		Job job = busyLoop;
-		long stop = currentTimeMillis() + 10000;
+		long stop = currentTimeMillis() + 300000;
 		assertEmpty("No jobs on start", subject);
 		for (long i = 0; currentTimeMillis() < stop; i++) {
 			Assert.assertTrue(shutdown(job, 10000));
@@ -240,12 +251,59 @@ public class UIJobCollectorTest {
 			job.join();
 			job.join();
 			debug("Attempt " + i);
+			int runsBefore = busyLoopRuns.get();
+			int cancelledBefore = busyLoopCancelledOnStart.get();
 			job.schedule();
 			job.cancel();
 			job.schedule();
-			assertNever(schedulingTolerance, "Should not step immediately. Iteration " + i, () -> isEmpty(subject));
+			long checkStart = currentTimeMillis();
+			long stopCheck = checkStart + 20;
+			while (currentTimeMillis() < stopCheck) {
+				Thread.yield();
+				if (isEmpty(subject)) { // unchanged
+					long failedAfter = currentTimeMillis() - checkStart;
+					int jobState = job.getState();
+					int tracked = subject.getCount();
+					List<Job> active = subject.getJobs();
+					int runs = busyLoopRuns.get() - runsBefore;
+					int cancelledOnStart = busyLoopCancelledOnStart.get() - cancelledBefore;
+					IStatus result = job.getResult();
+					Thread.sleep(100);
+					Assert.fail("Should not step immediately. Iteration " + i
+							+ ", after " + failedAfter + " ms"
+							+ ", job state: " + jobState
+							+ ", tracked jobs: " + tracked
+							+ ", active jobs: " + active
+							+ ", runs this iteration: " + runs
+							+ ", cancelled on start: " + cancelledOnStart
+							+ ", result: " + result
+							+ ", busyloop tracked 100 ms later: " + subject.getJobs().contains(job));
+				}
+			}
 			debug("End of attempt " + i);
 		}
+	}
+
+	@Test
+	public void cancelRescheduleLeavesJobRunning() throws InterruptedException {
+		Job job = busyLoop;
+		int iterations = 20000;
+		int ended = 0;
+		for (int i = 0; i < iterations; i++) {
+			Assert.assertTrue(shutdown(job, 10));
+			int cancelledBefore = busyLoopCancelledOnStart.get();
+			job.schedule();
+			job.cancel();
+			job.schedule();
+			Thread.sleep(5);
+			// join(1) confirms NONE under the job manager lock, ruling out a transient read
+			if (job.getState() == Job.NONE && job.join(1, null)) {
+				ended++;
+				System.out.println("Iteration " + i + ": job ended, cancelled on start: "
+						+ (busyLoopCancelledOnStart.get() - cancelledBefore) + ", result: " + job.getResult());
+			}
+		}
+		Assert.assertEquals("Job ended after cancel+reschedule in " + ended + " of " + iterations, 0, ended);
 	}
 
 	@Test

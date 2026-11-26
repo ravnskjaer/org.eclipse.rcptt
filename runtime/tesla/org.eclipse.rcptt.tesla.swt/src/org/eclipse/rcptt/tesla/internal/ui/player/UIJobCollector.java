@@ -131,6 +131,8 @@ public class UIJobCollector implements Closeable {
 		private boolean blocked = false;
 		private long runningTime = System.currentTimeMillis();
 		private Thread lastThread = null;
+		private boolean reschedulePending = false;
+		private long doneTime = 0;
 		JobInfo(Job job) {
 			this.job = job;
 			this.status = calcJobStatus(job);
@@ -147,12 +149,11 @@ public class UIJobCollector implements Closeable {
 		}
 
 		synchronized void done(boolean reschedule) {
-			// Job's thread field is already null, but there is a good chance this listener is running in it's thread
-			// This is needed to handle pre-2022 AUTs, where listeners were not serialized
 			lastThread = Thread.currentThread();
 			if (reschedule) {
-				// Job will be rescheduled
 				rescheduleCounter += 1;
+				reschedulePending = true;
+				doneTime = System.currentTimeMillis();
 			}
 		}
 
@@ -174,8 +175,15 @@ public class UIJobCollector implements Closeable {
 		}
 		
 		synchronized void scheduled(long delay) {
+			reschedulePending = false;
 			status = calcJobStatus(job);
 			startingTime = System.currentTimeMillis() + delay;
+		}
+
+		/** The done event announced a reschedule that has not happened yet */
+		synchronized boolean isReschedulePending() {
+			// safety net in case the announced reschedule never comes
+			return reschedulePending && System.currentTimeMillis() < doneTime + 1000;
 		}
 
 		@Override
@@ -293,7 +301,14 @@ public class UIJobCollector implements Closeable {
 							} catch (OperationCanceledException | InterruptedException e) {
 								return Status.OK_STATUS;
 							}
-							jobs.remove(job, info);
+							// schedule() changes the state under the job manager lock, so a job
+							// scheduled again after the checks above is not removed
+							synchronized (jobManagerLock) {
+								if (job.getState() != Job.NONE || info.isReschedulePending()) {
+									continue;
+								}
+								jobs.remove(job, info);
+							}
 							event("gone", info);
 							found = true;
 						}
